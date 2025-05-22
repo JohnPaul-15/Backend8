@@ -12,6 +12,9 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Storage;
 
 class BookController extends Controller
 {
@@ -19,34 +22,52 @@ class BookController extends Controller
     {
         // Optional middleware for authorization
         $this->middleware('auth:sanctum');  // Ensure the user is authenticated when borrowing a book
+        $this->middleware('admin')->except(['index', 'show']);
     }
 
     /**
      * Display a listing of books with optional filters.
      */
-    public function index(Request $request)
+    public function index(Request $request): JsonResponse
     {
         $query = Book::query();
-        
+
+        // Search functionality
         if ($request->has('search')) {
             $query->search($request->search);
         }
-        
-        if ($request->has('available') && $request->available) {
+
+        // Genre filter
+        if ($request->has('genre')) {
+            $query->genre($request->genre);
+        }
+
+        // Availability filter
+        if ($request->boolean('available')) {
             $query->available();
         }
-        
-        $perPage = $request->get('per_page', 15);
+
+        // Active books only
+        if ($request->boolean('active_only', true)) {
+            $query->where('is_active', true);
+        }
+
+        // Sort by
+        $sortBy = $request->get('sort_by', 'created_at');
+        $sortOrder = $request->get('sort_order', 'desc');
+        $query->orderBy($sortBy, $sortOrder);
+
+        $perPage = $request->get('per_page', 10);
         $books = $query->paginate($perPage);
-        
+
         return response()->json([
             'success' => true,
             'data' => $books->items(),
             'meta' => [
-                'total' => $books->total(),
                 'current_page' => $books->currentPage(),
-                'per_page' => $books->perPage(),
                 'last_page' => $books->lastPage(),
+                'per_page' => $books->perPage(),
+                'total' => $books->total(),
             ]
         ]);
     }
@@ -93,19 +114,43 @@ class BookController extends Controller
     /**
      * Store a newly created book.
      */
-    public function store(StoreBookRequest $request)
+    public function store(Request $request): JsonResponse
     {
-        try {
-            $validated = $request->validated();
+        $validator = Validator::make($request->all(), [
+            'title' => 'required|string|max:255',
+            'author' => 'required|string|max:255',
+            'isbn' => 'required|string|unique:books,isbn',
+            'genre' => 'nullable|string|max:100',
+            'description' => 'nullable|string',
+            'total_copies' => 'required|integer|min:1',
+            'publisher' => 'nullable|string|max:255',
+            'publication_year' => 'nullable|integer|min:1800|max:' . (date('Y') + 1),
+            'language' => 'nullable|string|max:50',
+            'cover_image' => 'nullable|image|max:2048', // 2MB max
+        ]);
 
-            $book = Book::create([
-                'title' => $validated['title'],
-                'author' => $validated['author'],
-                'genre' => $validated['genre'],
-                'description' => $validated['description'] ?? null,
-                'total_copies' => $validated['total_copies'],
-                'available_copies' => $validated['total_copies'],
-            ]);
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $data = $validator->validated();
+            $data['available_copies'] = $data['total_copies'];
+
+            // Handle cover image upload
+            if ($request->hasFile('cover_image')) {
+                $path = $request->file('cover_image')->store('book-covers', 'public');
+                $data['cover_image'] = $path;
+            }
+
+            $book = Book::create($data);
+
+            DB::commit();
 
             return response()->json([
                 'success' => true,
@@ -114,10 +159,10 @@ class BookController extends Controller
             ], 201);
 
         } catch (\Exception $e) {
+            DB::rollBack();
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to create book: ' . $e->getMessage(),
-                'errors' => $e instanceof \Illuminate\Validation\ValidationException ? $e->errors() : null
+                'message' => 'Failed to create book: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -125,52 +170,73 @@ class BookController extends Controller
     /**
      * Display the specified book.
      */
-    public function show(Book $book)
+    public function show(Book $book): JsonResponse
     {
         return response()->json([
             'success' => true,
-            'data' => $book
+            'data' => $book->load('transactions')
         ]);
     }
 
     /**
      * Update the specified book.
      */
-    public function update(UpdateBookRequest $request, Book $book)
+    public function update(Request $request, Book $book): JsonResponse
     {
+        $validator = Validator::make($request->all(), [
+            'title' => 'sometimes|required|string|max:255',
+            'author' => 'sometimes|required|string|max:255',
+            'isbn' => ['sometimes', 'required', 'string', Rule::unique('books')->ignore($book->id)],
+            'genre' => 'nullable|string|max:100',
+            'description' => 'nullable|string',
+            'total_copies' => 'sometimes|required|integer|min:1',
+            'publisher' => 'nullable|string|max:255',
+            'publication_year' => 'nullable|integer|min:1800|max:' . (date('Y') + 1),
+            'language' => 'nullable|string|max:50',
+            'cover_image' => 'nullable|image|max:2048',
+            'is_active' => 'sometimes|boolean'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
         try {
             DB::beginTransaction();
 
-            $validated = $request->validated();
+            $data = $validator->validated();
 
-            // Calculate new available copies if total copies changed
-            if ($validated['total_copies'] != $book->total_copies) {
-                $borrowedCount = $book->transactions()
-                    ->where('status', 'borrowed')
-                    ->count();
-
-                if ($validated['total_copies'] < $borrowedCount) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Total copies cannot be less than currently borrowed copies ('.$borrowedCount.')'
-                    ], 422);
-                }
-
-                $validated['available_copies'] = $validated['total_copies'] - $borrowedCount;
+            // Handle total copies update
+            if (isset($data['total_copies'])) {
+                $diff = $data['total_copies'] - $book->total_copies;
+                $data['available_copies'] = $book->available_copies + $diff;
             }
 
-            $book->update($validated);
+            // Handle cover image upload
+            if ($request->hasFile('cover_image')) {
+                // Delete old cover image if exists
+                if ($book->cover_image) {
+                    Storage::disk('public')->delete($book->cover_image);
+                }
+                $path = $request->file('cover_image')->store('book-covers', 'public');
+                $data['cover_image'] = $path;
+            }
+
+            $book->update($data);
+
             DB::commit();
 
             return response()->json([
                 'success' => true,
                 'message' => 'Book updated successfully',
-                'data' => $book
+                'data' => $book->fresh()
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('Book update failed: '.$e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to update book: ' . $e->getMessage()
@@ -179,23 +245,29 @@ class BookController extends Controller
     }
 
     /**
-     * Remove the specified book.
+     * Remove the specified book (soft delete).
      */
-    public function destroy(Book $book)
+    public function destroy(Book $book): JsonResponse
     {
         try {
-            $borrowedCount = $book->transactions()
-                ->where('status', 'borrowed')
-                ->count();
+            DB::beginTransaction();
 
-            if ($borrowedCount > 0) {
+            // Check if book has active borrowings
+            if ($book->transactions()->where('status', 'borrowed')->exists()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Cannot delete book with active borrowings ('.$borrowedCount.' copies currently borrowed)'
+                    'message' => 'Cannot delete book with active borrowings'
                 ], 422);
             }
 
+            // Delete cover image if exists
+            if ($book->cover_image) {
+                Storage::disk('public')->delete($book->cover_image);
+            }
+
             $book->delete();
+
+            DB::commit();
 
             return response()->json([
                 'success' => true,
@@ -203,6 +275,7 @@ class BookController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            DB::rollBack();
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete book: ' . $e->getMessage()
@@ -211,44 +284,60 @@ class BookController extends Controller
     }
 
     /**
+     * Restore a soft-deleted book.
+     */
+    public function restore($id): JsonResponse
+    {
+        try {
+            $book = Book::withTrashed()->findOrFail($id);
+            $book->restore();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Book restored successfully',
+                'data' => $book
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to restore book: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Borrow a book
      */
-    public function borrow(Book $book): JsonResponse
+    public function borrow(Request $request, Book $book)
     {
-        // Check if user is authenticated
-        if (!Auth::check()) {
-            return $this->errorResponse('Unauthorized', 401);
+        if ($book->available <= 0) {
+            return response()->json([
+                'message' => 'Book is not available for borrowing'
+            ], 422);
         }
 
-        // Check if book is available
-        if ($book->available_copies < 1) {
-            return $this->errorResponse('No available copies of this book', 400);
+        $user = $request->user();
+        
+        // Check if user has already borrowed this book
+        if ($book->transactions()
+            ->where('user_id', $user->id)
+            ->where('status', 'borrowed')
+            ->exists()) {
+            return response()->json([
+                'message' => 'You have already borrowed this book'
+            ], 422);
         }
 
-        DB::beginTransaction();
-        try {
-            // Decrement available copies
-            $book->decrement('available_copies');
-            
-            // Create transaction record
-            $transaction = $book->transactions()->create([
-                'user_id' => Auth::id(),
-                'borrowed_at' => now(),  // Explicitly set the borrowed_at field
-                'due_date' => now()->addWeeks(2), // 2 weeks borrowing period
-                'status' => 'borrowed'
-            ]);
-            
-            DB::commit();
-            
-            return $this->successResponse([
-                'book' => $book->fresh(),
-                'transaction' => $transaction
-            ], 'Book borrowed successfully');
-            
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return $this->errorResponse('Failed to borrow book: ' . $e->getMessage(), 500);
-        }
+        // Create transaction
+        $transaction = $book->transactions()->create([
+            'user_id' => $user->id,
+            'borrowed_at' => now(),
+            'due_date' => now()->addDays(14), // 2 weeks borrowing period
+            'status' => 'borrowed'
+        ]);
+
+        return response()->json($transaction, 201);
     }
 
     /**
@@ -316,5 +405,18 @@ class BookController extends Controller
             'success' => false,
             'message' => $message,
         ], $status);
+    }
+
+    public function available()
+    {
+        $books = Book::where('available_copies', '>', 0)
+            ->where('status', 'active')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Available books retrieved successfully',
+            'data' => $books
+        ]);
     }
 }

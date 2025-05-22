@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Transaction extends Model
 {
@@ -14,6 +15,7 @@ class Transaction extends Model
     protected $fillable = [
         'user_id',
         'book_id',
+        'borrower_id',
         'borrowed_at',
         'due_date',
         'returned_at',
@@ -26,18 +28,29 @@ class Transaction extends Model
         'returned_at'
     ];
 
+    protected $casts = [
+        'borrowed_at' => 'datetime',
+        'returned_at' => 'datetime',
+        'due_date' => 'datetime',
+    ];
+
     /**
      * Relationships
      */
 
-    public function user()
+    public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
     }
 
-    public function book()
+    public function book(): BelongsTo
     {
         return $this->belongsTo(Book::class);
+    }
+
+    public function borrower(): BelongsTo
+    {
+        return $this->belongsTo(Borrower::class);
     }
 
     /**
@@ -83,5 +96,13 @@ class Transaction extends Model
             && $this->due_date instanceof Carbon
             && $this->due_date->isPast()
             && is_null($this->returned_at);
+    }
+
+    public function getStatusAttribute($value)
+    {
+        if ($value === 'borrowed' && now()->isAfter($this->due_date)) {
+            return 'overdue';
+        }
+        return $value;
     }
 }

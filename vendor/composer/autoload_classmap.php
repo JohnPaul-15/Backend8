@@ -15,6 +15,7 @@ return array(
     'App\\Http\\Controllers\\TransactionController' => $baseDir . '/app/Http/Controllers/TransactionController.php',
     'App\\Http\\Controllers\\UserController' => $baseDir . '/app/Http/Controllers/UserController.php',
     'App\\Http\\Kernel' => $baseDir . '/app/Http/Kernel.php',
+    'App\\Http\\Middleware\\AdminMiddleware' => $baseDir . '/app/Http/Middleware/AdminMiddleware.php',
     'App\\Http\\Middleware\\EnsureIsAdmin' => $baseDir . '/app/Http/Middleware/EnsureIsAdmin.php',
     'App\\Http\\Requests\\BorrowBookRequest' => $baseDir . '/app/Http/Requests/BorrowBookRequest.php',
     'App\\Http\\Requests\\LoginRequest' => $baseDir . '/app/Http/Requests/LoginRequest.php',

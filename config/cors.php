@@ -19,8 +19,9 @@ return [
     'allowed_origins' => [
         'http://localhost:3000',  // Next.js development server
         'http://127.0.0.1:3000', // Alternative Next.js development server
+        'http://localhost:3001',  // Your current frontend server
+        'http://127.0.0.1:3001', // Alternative frontend server
         env('FRONTEND_URL', 'http://localhost:3000'), // Production frontend URL
-        'http://localhost:3001',
     ],
 
     'allowed_origins_patterns' => [],
@@ -32,7 +33,6 @@ return [
         'Authorization',
         'X-CSRF-TOKEN',
         'X-XSRF-TOKEN',
-        '*',
     ],
 
     'exposed_headers' => [

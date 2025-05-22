@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -13,20 +14,28 @@ use Illuminate\Support\Str;
 
 class Book extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $fillable = [
         'title',
         'author',
+        'isbn',
         'genre',
         'description',
-        'total_copies', 
+        'total_copies',
         'available_copies',
+        'cover_image',
+        'publisher',
+        'publication_year',
+        'language',
+        'is_active'
     ];
 
     protected $casts = [
         'total_copies' => 'integer',
-        'available_copies' => 'integer'
+        'available_copies' => 'integer',
+        'publication_year' => 'integer',
+        'is_active' => 'boolean',
     ];
 
     /**
@@ -50,10 +59,11 @@ class Book extends Model
     /**
      * Scope for available books
      */
-    public function scopeAvailable($query)
-{
-    return $query->where('available_copies', '>', 0);
-}
+    public function scopeAvailable(Builder $query): Builder
+    {
+        return $query->where('available_copies', '>', 0)
+                    ->where('is_active', true);
+    }
 
     /**
      * Scope for genre filter
@@ -66,21 +76,41 @@ class Book extends Model
     /**
      * Scope for search functionality
      */
-    public function scopeSearch($query, $search)
-{
-    return $query->where(function($q) use ($search) {
-        $q->where('title', 'like', "%{$search}%")
-          ->orWhere('author', 'like', "%{$search}%")
-          ->orWhere('genre', 'like', "%{$search}%");
-    });
-}
+    public function scopeSearch(Builder $query, string $search): Builder
+    {
+        return $query->where(function($q) use ($search) {
+            $q->where('title', 'like', "%{$search}%")
+              ->orWhere('author', 'like', "%{$search}%")
+              ->orWhere('isbn', 'like', "%{$search}%")
+              ->orWhere('genre', 'like', "%{$search}%");
+        });
+    }
 
     /**
-     * Check if book is available
+     * Get cover image URL
+     */
+    public function getCoverUrlAttribute(): string
+    {
+        if ($this->cover_image) {
+            return Storage::url($this->cover_image);
+        }
+        return asset('images/default-book-cover.jpg');
+    }
+
+    /**
+     * Get short description
+     */
+    public function getShortDescriptionAttribute(): string
+    {
+        return Str::limit($this->description, 100);
+    }
+
+    /**
+     * Check if book is available for borrowing
      */
     public function isAvailable(): bool
     {
-        return $this->available_copies > 0;
+        return $this->available_copies > 0 && $this->is_active;
     }
 
     /**
@@ -141,34 +171,13 @@ class Book extends Model
     }
 
     /**
-     * Get available copies percentage
+     * Get availability percentage
      */
-    public function availabilityPercentage(): float
+    public function getAvailabilityPercentageAttribute(): float
     {
         if ($this->total_copies === 0) {
             return 0;
         }
-
         return round(($this->available_copies / $this->total_copies) * 100, 2);
-    }
-
-    /**
-     * Get cover image URL
-     */
-    public function getCoverUrlAttribute(): string
-    {
-        if ($this->cover_image) {
-            return Storage::url($this->cover_image);
-        }
-
-        return asset('images/Books.jpg');
-    }
-
-    /**
-     * Get short description (first 100 chars)
-     */
-    public function getShortDescriptionAttribute(): string
-    {
-        return Str::limit($this->description, 100);
     }
 }

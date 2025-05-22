@@ -11,6 +11,75 @@ use Illuminate\Support\Facades\Log;
 
 class TransactionController extends Controller
 {
+    public function index(Request $request)
+    {
+        $query = Transaction::with(['book', 'user']);
+
+        if ($request->user()->role !== 'admin') {
+            $query->where('user_id', $request->user()->id);
+        }
+
+        if ($request->has('status')) {
+            $query->where('status', $request->status);
+        }
+
+        $transactions = $query->latest()->paginate(10);
+        return response()->json($transactions);
+    }
+
+    public function show(Transaction $transaction)
+    {
+        if ($transaction->user_id !== request()->user()->id && request()->user()->role !== 'admin') {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        return response()->json($transaction->load(['book', 'user']));
+    }
+
+    public function return(Transaction $transaction)
+    {
+        if ($transaction->status !== 'borrowed') {
+            return response()->json([
+                'message' => 'This book has already been returned'
+            ], 422);
+        }
+
+        if ($transaction->user_id !== request()->user()->id && request()->user()->role !== 'admin') {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        DB::transaction(function () use ($transaction) {
+            $transaction->update([
+                'returned_at' => now(),
+                'status' => 'returned'
+            ]);
+        });
+
+        return response()->json($transaction->fresh(['book', 'user']));
+    }
+
+    public function getUserBorrowedBooks(Request $request)
+    {
+        $transactions = Transaction::with('book')
+            ->where('user_id', $request->user()->id)
+            ->where('status', 'borrowed')
+            ->latest()
+            ->get();
+
+        return response()->json($transactions);
+    }
+
+    public function getOverdueBooks()
+    {
+        $transactions = Transaction::with(['book', 'user'])
+            ->where('status', 'borrowed')
+            ->where('due_date', '<', now())
+            ->latest()
+            ->get();
+
+        return response()->json($transactions);
+    }
+
     public function returnBook(Request $request, $transactionId): JsonResponse
     {
         DB::beginTransaction();

@@ -7,6 +7,7 @@ use App\Http\Controllers\BookController;
 use App\Http\Controllers\TransactionController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\AdminController;
+use App\Http\Controllers\BorrowerController;
 
 /*
 |--------------------------------------------------------------------------
@@ -16,62 +17,55 @@ use App\Http\Controllers\AdminController;
 
 // Public routes
 Route::get('/status', function () {
-    return response()->json([
-        'status' => 'operational',
-        'version' => '1.0.0',
-        'timestamp' => now()->toDateTimeString()
-    ]);
+    return response()->json(['status' => 'ok']);
 });
 
-// Auth routes
-Route::prefix('auth')->group(function () {
-    Route::post('/register', [AuthController::class, 'register']);
-    Route::post('/login', [AuthController::class, 'login']);
-    Route::post('/change-password', [UserController::class, 'changePassword'])->middleware('auth:sanctum');
-});
+Route::post('/auth/register', [AuthController::class, 'register']);
+Route::post('/auth/login', [AuthController::class, 'login']);
 
-// Protected routes (require authentication)
+// Protected routes
 Route::middleware('auth:sanctum')->group(function () {
-    // Auth
+    // Auth routes
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/auth/me', [AuthController::class, 'me']);
 
-    // User profile
-    Route::get('/profile', [UserController::class, 'profile']);
-    Route::put('/profile/update', [UserController::class, 'updateProfile']);
-    Route::get('/user/borrowed-books', [UserController::class, 'borrowedBooks']);
+    // Profile management
+    Route::put('/profile', [UserController::class, 'updateProfile']);
+    Route::get('/profile', [UserController::class, 'showProfile']);
 
-    // Books
+    // Book routes
     Route::get('/books', [BookController::class, 'index']);
-    Route::get('/books/{id}', [BookController::class, 'show']);
-    Route::post('/books/{id}/borrow', [BookController::class, 'borrow']);
+    Route::get('/books/{book}', [BookController::class, 'show']);
+    Route::post('/books/{book}/borrow', [BookController::class, 'borrow']);
 
-    // Transactions
+    // Transaction routes
     Route::get('/transactions', [TransactionController::class, 'index']);
-    Route::get('/transactions/{id}', [TransactionController::class, 'show']);
-    Route::post('/transactions/{id}/return', [TransactionController::class, 'returnBook']);
-    Route::get('/transactions/stats', [TransactionController::class, 'stats']);
+    Route::get('/transactions/{transaction}', [TransactionController::class, 'show']);
+    Route::post('/transactions/{transaction}/return', [TransactionController::class, 'return']);
+    Route::get('/transactions/borrowed', [TransactionController::class, 'getUserBorrowedBooks']);
 
     // Admin routes
-    Route::middleware('admin')->prefix('admin')->group(function () {
-        // Dashboard
-        Route::get('/dashboard-stats', [AdminController::class, 'dashboardStats']);
+    Route::middleware('admin')->group(function () {
+        // Dashboard stats
+        Route::get('/admin/dashboard-stats', [UserController::class, 'getDashboardStats']);
 
-        // Books management
-        Route::get('/books', [BookController::class, 'adminIndex']);
+        // Book management
         Route::post('/books', [BookController::class, 'store']);
-        Route::get('/books/{id}', [BookController::class, 'adminShow']);
-        Route::put('/books/{id}', [BookController::class, 'update']);
-        Route::delete('/books/{id}', [BookController::class, 'destroy']);
+        Route::put('/books/{book}', [BookController::class, 'update']);
+        Route::delete('/books/{book}', [BookController::class, 'destroy']);
+        Route::post('/books/{id}/restore', [BookController::class, 'restore']);
 
-        // Users management
-        Route::get('/users', [UserController::class, 'index']);
-        Route::get('/users/{id}', [UserController::class, 'show']);
-        Route::put('/users/{id}', [UserController::class, 'update']);
-        Route::delete('/users/{id}', [UserController::class, 'destroy']);
+        // User management
+        Route::get('/admin/users', [UserController::class, 'index']);
+        Route::get('/admin/users/{user}', [UserController::class, 'show']);
+        Route::put('/admin/users/{user}', [UserController::class, 'update']);
+        Route::delete('/admin/users/{user}', [UserController::class, 'destroy']);
 
-        // Transactions management
-        Route::get('/transactions', [TransactionController::class, 'adminIndex']);
-        Route::post('/transactions/{id}/mark-returned', [TransactionController::class, 'markAsReturned']);
+        // Transaction management
+        Route::get('/admin/transactions/overdue', [TransactionController::class, 'getOverdueBooks']);
     });
+
+    // Borrower routes
+    Route::apiResource('borrowers', BorrowerController::class);
+    Route::get('/books/available', [BookController::class, 'available']);
 });
